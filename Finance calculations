@@ -1,0 +1,9 @@
+app.py
+engine.py
+requirements.txt
+test_core.py
+test_web.py
+templates/
+    index.html
+static/
+    logo.jpg
