@@ -1,0 +1,496 @@
+SPWM COMPLETE SOURCE 3.0.0
+The ZIP already has these separate, correctly named files. Logo binary is included separately in ZIP. Do not upload this combined text as app.py.
+
+
+========================================================================
+FILE: app.py
+========================================================================
+"""SPWM hosted calculator. Run with gunicorn app:app; no debug mode."""
+import os
+from pathlib import Path
+import requests
+from flask import Flask, request, jsonify, render_template_string, Response, send_file
+from engine import calculate, ValidationError
+from reports import csv_data
+from interface import HTML
+import mailer
+app=Flask(__name__);app.config['MAX_CONTENT_LENGTH']=100000
+
+@app.before_request
+def check_origin():
+    if request.method=='POST':
+        expected=mailer.public_url() or request.host_url.rstrip('/')
+        if not request.is_json or request.headers.get('Origin')!=expected:return jsonify(error='Invalid request origin or content type.'),403
+
+@app.after_request
+def secure_headers(response):
+    response.headers['Cache-Control']='no-store';response.headers['X-Content-Type-Options']='nosniff';response.headers['Referrer-Policy']='strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://www.spwm.co.za https://spwm.co.za"
+    return response
+
+@app.get('/')
+def index():return render_template_string(HTML,enabled=mailer.configured(),sitekey=os.getenv('TURNSTILE_SITE_KEY',''),privacy=os.getenv('PRIVACY_URL',''))
+
+@app.get('/logo')
+def logo():return send_file(Path(__file__).with_name('logo.jpg'),mimetype='image/jpeg')
+
+@app.get('/health')
+def health():return jsonify(status='ok',version='3.0.0',email_configured=mailer.configured())
+
+@app.post('/calculate')
+def calc():
+    try:return jsonify(calculate(request.get_json()['loan']))
+    except (ValidationError,ValueError,TypeError,KeyError,AttributeError,OverflowError) as e:return jsonify(error=str(e)),400
+
+@app.post('/csv')
+def export():
+    try:return Response(csv_data(calculate(request.get_json()['loan'])),mimetype='text/csv',headers={'Content-Disposition':'attachment; filename=SPWM-schedule.csv'})
+    except (ValidationError,ValueError,TypeError,KeyError,AttributeError,OverflowError) as e:return jsonify(error=str(e)),400
+
+@app.post('/email')
+def email():
+    if not mailer.configured():return jsonify(error='Email reporting is not configured. Contact webmaster@spwm.co.za.'),503
+    try:
+        d=request.get_json();p=mailer.validate_person(d.get('person'));calculate(d['loan'])
+        if not mailer.verify_bot(d.get('token')):return jsonify(error='Please complete a fresh security check.'),400
+        if not mailer.allowed(p['email']):return jsonify(error='Request limit reached. Contact webmaster@spwm.co.za.'),429
+        result=mailer.send_reports(d['loan'],d['person'],d.get('request_id'))
+        return jsonify(reference=result['reference'],message='Email service accepted your PDF for sending and the SPWM PDF/Excel copy. Check your inbox/spam; acceptance is not guaranteed inbox delivery.')
+    except mailer.DeliveryError as e:return jsonify(error=str(e),client_accepted=e.client_accepted),503
+    except requests.RequestException:return jsonify(error='Security/email service temporarily unavailable. Please retry with a fresh security check.'),503
+    except (ValidationError,ValueError,TypeError,KeyError,AttributeError,OverflowError):return jsonify(error='Check the contact details, request reference and calculation inputs.'),400
+    except Exception:
+        app.logger.error('Report processing failed; personal data not logged.')
+        return jsonify(error='Report processing failed. Please contact webmaster@spwm.co.za.'),500
+
+
+========================================================================
+FILE: engine.py
+========================================================================
+"""SPWM 3.0.0 educational loan model. Not a lender settlement quote."""
+import calendar, math
+from datetime import date
+class ValidationError(ValueError): pass
+
+def num(value,label,minimum=0,maximum=1e10):
+    try:
+        if value is None or value=='' or isinstance(value,bool): raise ValueError()
+        n=float(value)
+        if not math.isfinite(n) or not minimum<=n<=maximum: raise ValueError()
+        return n
+    except (ValueError,TypeError): raise ValidationError(label+' is invalid.')
+
+def day(value):
+    try:
+        d=date.fromisoformat(str(value))
+        if d.isoformat()!=value: raise ValueError()
+        return d
+    except (ValueError,TypeError): raise ValidationError('Use valid YYYY-MM-DD dates.')
+
+def add_month(d,n):
+    y,m=divmod(d.year*12+d.month-1+n,12);m+=1
+    return date(y,m,min(d.day,calendar.monthrange(y,m)[1]))
+
+def calculate(c,baseline=False):
+    if not isinstance(c,dict): raise ValidationError('Invalid loan details.')
+    kind=c.get('kind');p=num(c.get('principal'),'Principal',.01);rate=num(c.get('rate'),'Annual rate',0,100)/100
+    if kind not in ('personal','vehicle','home'): raise ValidationError('Select a loan type.')
+    term=num(c.get('months'),'Months',1,600)
+    if term!=int(term): raise ValidationError('Months must be whole numbers.')
+    term=int(term);start=day(c.get('start'));first=day(c.get('first'))
+    if not 0<(first-start).days<=62: raise ValidationError('First payment must be 1–62 days after balance date.')
+    vat=num(c.get('vat',.15),'VAT fraction',0,.3);service=num(c.get('service',0),'Service fee');init=num(c.get('initiation',0),'Initiation fee')
+    cap=min(.15*p,min(5250,1100+.1*max(p-10000,0)) if kind=='home' else min(1050,165+.1*max(p-1000,0)))*(1+vat)
+    if service>60*(1+vat)+.005: raise ValidationError('Service fee exceeds configured reference limit.')
+    if init>cap+.005: raise ValidationError('Initiation fee exceeds configured reference limit.')
+    extra=0 if baseline else num(c.get('extra',0),'Monthly extra')
+    balloon=num(c.get('balloon',0),'Balloon',0,p)
+    if balloon and kind!='vehicle': raise ValidationError('Balloon is for vehicle finance only.')
+    mode=c.get('insurance','none');ir=num(c.get('insurance_rate',0),'Insurance rate');fixed=num(c.get('premium',0),'Premium');ic=2 if kind=='home' else 4.5
+    if mode not in ('none','fixed','reducing'): raise ValidationError('Invalid insurance method.')
+    if (mode=='reducing' and ir>ic) or (mode=='fixed' and fixed>p/1000*ic+.005): raise ValidationError('Credit-life premium exceeds base reference screen. Enhanced policies require separate review.')
+    warnings=['Reference limits require current legal review. Actual lender billing, day count and rounding may differ.']
+    if mode=='fixed': warnings.append('Fixed insurance premium requires ongoing review as debt reduces.')
+    if c.get('repo') not in ('',None):
+        limit=num(c['repo'],'Repo',0,100)+(12 if kind=='home' else 21 if kind=='personal' else 17)
+        if rate*100>limit+1e-8: raise ValidationError('Annual interest exceeds configured repo-linked reference screen.')
+    else: warnings.append('Interest ceiling not screened: no verified applicable repo rate entered.')
+    quote=day(c['quote']) if c.get('quote') else None;notice=day(c['notice']) if c.get('notice') else None
+    if quote and quote<start: raise ValidationError('Settlement cannot precede balance date.')
+    if notice and quote and notice>quote: raise ValidationError('Notice cannot follow settlement.')
+    if c.get('rate_type','variable') not in ('variable','fixed'): raise ValidationError('Invalid rate type.')
+    events={}
+    def event(d):return events.setdefault(d,dict(regular=False,extra=0.,fees=[]))
+    for i in range(term):event(add_month(first,i))['regular']=True
+    maturity=add_month(first,term-1)
+    irregular=[] if baseline else c.get('irregular',[]);fees=c.get('fees',[])
+    if not isinstance(irregular,list) or not isinstance(fees,list) or len(irregular)>100 or len(fees)>100:raise ValidationError('Use at most 100 dated entries per section.')
+    for x in irregular:
+        if not isinstance(x,dict):raise ValidationError('Invalid dated payment.')
+        d=day(x.get('date'))
+        if not start<=d<=maturity:raise ValidationError('Dated payment outside loan period.')
+        event(d)['extra']+=num(x.get('amount'),'Dated payment',.01)
+    for x in fees:
+        if not isinstance(x,dict):raise ValidationError('Invalid dated fee.')
+        d=day(x.get('date'))
+        if x.get('kind') not in ('insurance','default','collection') or x.get('verified') is not True:raise ValidationError('Independently review entitlement and tariffs for dated fees.')
+        if not start<=d<=maturity:raise ValidationError('Dated fee outside loan period.')
+        event(d)['fees'].append((x['kind'],num(x.get('amount'),'Dated fee',.01)))
+    if fees:warnings.append('Dated fees are supplied amounts, not certified lawful. No default ledger, collection tariff or section 103(5) reconstruction is performed.')
+    if quote:event(quote)
+    capital=p+(init if c.get('finance') is True else 0);r=rate/12
+    payment=num(c['payment'],'Actual instalment',.01) if c.get('payment') not in ('',None) else (capital-balloon)/term if not r else (capital*(1+r)**term-balloon)*r/((1+r)**term-1)
+    interest=fee_balance=paid=total_i=total_ins=unused=0.;total_f=init;previous=start;rows=[];payoff=None;q=None
+    def allocate(d,label,opening,accr,charges,ins,offered):
+        nonlocal capital,interest,fee_balance,paid,unused
+        ip=min(offered,interest);interest-=ip;offered-=ip
+        fp=min(offered,fee_balance);fee_balance-=fp;offered-=fp
+        cp=min(offered,capital);capital-=cp;offered-=cp
+        actual=ip+fp+cp;paid+=actual;unused+=offered
+        rows.append(dict(date=d.isoformat(),event=label,opening=opening,interest=accr,fees=charges,insurance=ins,payment=actual,interest_paid=ip,fees_paid=fp,capital_paid=cp,principal=max(0,capital),balance=max(0,capital+interest+fee_balance),unused=offered))
+    if init and c.get('finance') is not True:fee_balance=init;allocate(start,'Initiation paid upfront',capital,0,init,0,init)
+    for d,e in sorted(events.items()):
+        active=capital+interest+fee_balance>1e-7;opening=capital
+        accr=capital*rate*(d-previous).days/365 if active else 0.;interest+=accr;total_i+=accr;previous=d;charges=ins=0.
+        if active:
+            for category,amount in e['fees']:
+                charges+=amount
+                if category=='insurance':ins+=amount
+            if e['regular']:
+                premium=capital/1000*ir if mode=='reducing' else fixed if mode=='fixed' else 0
+                charges+=service+premium;ins+=premium
+        fee_balance+=charges;total_f+=charges;total_ins+=ins
+        offered=(payment+extra+charges if active and e['regular'] else 0)+e['extra'];final=e['regular'] and d==maturity
+        if active and final:offered=max(offered,capital+interest+fee_balance)
+        if active or offered:allocate(d,'Final incl. balloon/residual' if final else 'Scheduled' if e['regular'] else 'Dated event',opening,accr,charges,ins,offered)
+        if active and capital+interest+fee_balance<1e-7 and payoff is None:payoff=d.isoformat()
+        if d==quote:
+            debt=max(0,capital+interest+fee_balance);large=kind=='home' or p>=250000 or c.get('original_large') is True;termination=0.
+            if large and debt>1e-7:
+                if c.get('rate_type','variable')=='fixed':termination=None if c.get('fixed_charge') in ('',None) else num(c['fixed_charge'],'Lender-confirmed termination charge')
+                else:termination=capital*rate*max(0,(add_month(notice or quote,3)-quote).days)/365
+            q=dict(date=d.isoformat(),principal=max(0,capital),interest=max(0,interest),fees=max(0,fee_balance),termination=termination,subtotal=debt,total=None if termination is None else debt+termination)
+    result=dict(instalment=payment,payoff=payoff,final_payment=next((x['payment'] for x in reversed(rows) if x['payment']>1e-7),0),total_paid=paid,total_interest=total_i,total_fees=total_f,total_insurance=total_ins,unused=unused,quote=q,warnings=warnings,rows=rows)
+    if not baseline:result['interest_saved']=calculate(c,True)['total_interest']-total_i
+    return result
+
+
+========================================================================
+FILE: interface.py
+========================================================================
+HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SPWM Loan Calculator</title><style>
+*{box-sizing:border-box}body{margin:0;color:#111;background:white;font:16px/1.5 Arial,sans-serif}main{max-width:1100px;margin:auto;padding:22px;border-top:5px solid #ce2029}header{display:flex;align-items:center;gap:22px;border-bottom:2px solid #ce2029}header img{width:190px;height:auto}h1{font-size:25px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}label{display:block;font-size:14px;font-weight:bold}input:not([type=checkbox]),select,textarea{width:100%;padding:11px;margin-top:6px;border:1px solid #aaa;border-radius:5px;font:16px Arial;color:black;background:white}textarea{min-height:100px}fieldset{margin:20px 0;padding:16px;border:1px solid #ddd}legend{font-weight:bold}button{padding:12px 18px;margin:12px 8px 12px 0;border:0;border-radius:5px;background:#ce2029;color:white;font-weight:bold;cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}:focus-visible{outline:3px solid black;outline-offset:3px}.note{padding:14px;background:#f5f5f5;border-left:4px solid #ce2029;font-size:13px}.check{display:flex;align-items:flex-start;gap:10px;font-weight:normal;margin:16px 0}.check input{width:20px;height:20px;flex-shrink:0}#summary p{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #ddd;padding:8px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:black;color:white}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:right;white-space:nowrap}.scroll{overflow:auto}a{color:black}#status,#error{font-weight:bold}[hidden]{display:none!important}@media(max-width:600px){header{flex-direction:column;align-items:flex-start}.grid{grid-template-columns:1fr}#summary p{flex-direction:column}}
+</style></head><body><main><header><img src="/logo" alt="SP Wealth Management"><h1>Loan Payoff &amp; Early Settlement Calculator</h1></header><p class="note">Planning estimates for natural-person performing accounts. Actual/365 simple daily interest; entered rate held constant. Payments settle interest, fees, then principal. Not an official lender quotation, financial advice or legal certification.</p>
+<form id="loan"><fieldset><legend>1. Loan, fees and insurance</legend><div class="grid" id="fields"></div><p class="note">Use current principal and remaining term for an existing account. Do not add initiation fees again if already included. Final payment clears any residual and balloon; monthly PMT may differ from actual/365 repayments. No first-period fee/insurance proration. Fees entered include applicable VAT.</p></fieldset><fieldset><legend>2. Irregular additional payments</legend><label>One payment per line: YYYY-MM-DD, amount<textarea id="irregular" placeholder="2027-06-15, 10000"></textarea></label><p>These are additional payments, not replacements for scheduled debit orders.</p></fieldset><fieldset><legend>3. Optional documented charges</legend><label>One per line: YYYY-MM-DD, insurance|default|collection, amount<textarea id="fees" placeholder="2027-06-15, insurance, 100"></textarea></label><label class="check"><input id="verified" type="checkbox"><span>I have independently checked entitlement and the applicable tariff/cap for dated charges. No default ledger, legal tariff or section 103(5) reconstruction is provided.</span></label></fieldset><fieldset><legend>4. Settlement estimate (optional)</legend><div id="settlement" class="grid"></div><label class="check"><input id="original_large" type="checkbox"><span>For an existing non-mortgage loan: the original agreement was large even if today's balance is lower.</span></label><p class="note">Settlement is AFTER same-day scheduled/extra payments. Ordinary mortgages are treated as large; other supported transactions use original principal of at least R250,000. Variable large-agreement termination interest is approximated to three calendar months after notice; no notice assumes three months from settlement. Fixed large totals are withheld without the lender-confirmed charge.</p></fieldset><button>Calculate</button><button type="button" id="reset">Clear dated entries / restore sample</button></form><p id="error" role="alert"></p><section id="results" hidden><h2>Your estimate</h2><div id="summary"></div><p id="warnings" class="note"></p><button type="button" id="csv">Download schedule (CSV / Excel compatible)</button><details><summary>Full amortisation schedule</summary><div class="scroll" id="schedule"></div></details></section>
+<h2>Email my PDF</h2><p>The server prepares your PDF and sends it to your email address. A PDF copy and internal Excel version are sent separately to webmaster@spwm.co.za. The Excel version is not sent to the client.</p><form id="report"><div class="grid"><label>Full name<input id="name" autocomplete="name" maxlength="120" required></label><label>Email<input id="email" type="email" autocomplete="email" maxlength="254" required></label><label>Mobile (optional)<input id="mobile" type="tel" autocomplete="tel" maxlength="30"></label></div>{% if privacy %}<p><a href="{{ privacy }}" target="_blank" rel="noopener">Read the SPWM privacy notice</a></p>{% endif %}<label class="check"><input id="consent" type="checkbox" required><span>I request this report and agree to processing of my contact and calculation information by SPWM and its service providers to prepare and deliver it, including the SPWM copy. I have read the privacy notice. This is not a marketing subscription.</span></label><label class="check"><input id="followup" type="checkbox"><span>Optional: Please contact me about my calculation.</span></label>{% if enabled %}<div class="cf-turnstile" data-sitekey="{{ sitekey }}" data-action="report"></div>{% else %}<p class="note">Calculator available. Email reporting is disabled until SPWM completes sender, security and privacy configuration.</p>{% endif %}<button id="send" {% if not enabled %}disabled{% endif %}>Email my PDF</button></form><p id="status" role="status" aria-live="polite"></p>
+<details><summary>Methodology and limitations</summary><p>Reference screens: service R60 before VAT; unsecured/other supported transactions initiation R165 plus 10% above R1,000 capped R1,050; ordinary mortgage R1,100 plus 10% above R10,000 capped R5,250; proportional 15% screen before VAT. Insurance base single-life rates: ordinary mortgage R2, other supported categories R4.50 per R1,000/month. Fixed premiums need ongoing review. Repo reference offsets: mortgage +12, personal unsecured +21, other transactions +17 percentage points. Check current law, applicable agreements, VAT and product mapping. These are not legal certifications.</p><p>600-month software limit is not a statutory loan limit. No universal NCA maximum principal is claimed. No juristic-person applicability decision, future rate changes, enhanced/joint-life insurance, affordable housing assessment, daily cent rounding, interest-on-interest compounding, default-cap reconstruction, debt review, collection/court tariff validation or conveyancing/bond cancellation attorney fees. Monthly costs billed at scheduled dates. Insurance is already in total fees. CSV contains calculation data only.</p></details><p class="note">SP Wealth Management · webmaster@spwm.co.za · version 3.0.0. Do not enter ID or bank-account numbers. No public PDF download or print button. PDFs are generated in memory; hosting, security and email providers process information under the published privacy/retention arrangements. Email service acceptance does not prove inbox delivery.</p></main>
+{% if enabled %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+<script>
+const $=id=>document.getElementById(id);const money=n=>n===null?'Lender-confirmed charge required':new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(n);let reference=crypto.randomUUID();
+function field(parent,id,label,value,options,type='number'){const l=document.createElement('label');l.textContent=label;const el=document.createElement(options?'select':'input');el.id=id;if(options){options.forEach(([v,t])=>el.add(new Option(t,v)));el.value=value;}else{el.type=type;el.value=value;if(type==='number'){el.min=0;el.step='any';}}l.append(el);$(parent).append(l);}
+const now=new Date(),today=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');const last=new Date(Date.UTC(now.getFullYear(),now.getMonth()+2,0)).getUTCDate(),first=new Date(Date.UTC(now.getFullYear(),now.getMonth()+1,Math.min(now.getDate(),last))).toISOString().slice(0,10);
+field('fields','kind','Loan type','personal',[['personal','Personal loan'],['vehicle','Vehicle finance'],['home','Ordinary home loan']]);[['principal','Principal at balance date (R)',250000],['rate','Nominal annual rate (%)',11.75],['months','Remaining months',60],['payment','Actual monthly instalment excl fees (R), optional',''],['extra','Extra monthly payment (R)',0],['balloon','Vehicle balloon at maturity (R)',0],['service','Monthly service fee incl VAT (R)',69],['initiation','Initiation fee incl VAT (R)',0],['vat','VAT fraction',.15],['repo','Verified applicable repo rate (%), optional',''],['insurance_rate','Credit-life rate per R1,000 (R)',0],['premium','Fixed monthly credit-life premium (R)',0]].forEach(x=>field('fields',...x));field('fields','start','Balance / advance date',today,null,'date');field('fields','first','First scheduled payment date',first,null,'date');field('fields','finance','Initiation fee treatment','false',[['false','Paid upfront'],['true','Financed, not already in balance']]);field('fields','insurance','Credit-life method','none',[['none','No premium modelled'],['fixed','Fixed monthly policy premium'],['reducing','Rate per declining R1,000 principal']]);field('settlement','quote','Requested settlement date','','','date');field('settlement','notice','Date notice received (optional)','','','date');field('settlement','rate_type','Rate type','variable',[['variable','Variable (constant projected rate)'],['fixed','Fixed']]);field('settlement','fixed_charge','Lender-confirmed fixed termination charge (R)','');
+const defaults={};document.querySelectorAll('#fields input,#fields select,#settlement input,#settlement select').forEach(x=>defaults[x.id]=x.value);
+function lines(id,fee=false){return $(id).value.split(/\n/).filter(x=>x.trim()).map(s=>{const p=s.split(',').map(x=>x.trim());if(p.length!==(fee?3:2))throw Error('Check '+id+' line format.');return fee?{date:p[0],kind:p[1],amount:p[2],verified:$('verified').checked}:{date:p[0],amount:p[1]};});}
+function loan(){const c={};document.querySelectorAll('#fields input,#fields select,#settlement input,#settlement select').forEach(x=>c[x.id]=x.value);c.finance=c.finance==='true';c.original_large=$('original_large').checked;c.irregular=lines('irregular');c.fees=lines('fees',true);return c;}
+async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let d;try{d=await r.json();}catch(e){throw Error('Service unavailable. Please wait and retry.');}if(!r.ok)throw Error(d.error||'Request failed.');return d;}
+function display(r){$('summary').replaceChildren();const pairs=[['Monthly instalment excluding fees',money(r.instalment)],['Payoff date',r.payoff],['Final payment including residual/balloon',money(r.final_payment)],['Total paid',money(r.total_paid)],['Interest',money(r.total_interest)],['Fees including insurance',money(r.total_fees)],['Insurance component (already included)',money(r.total_insurance)],['Interest saved vs no extras',money(r.interest_saved)],['Unused offered payments (not debited)',money(r.unused)]];if(r.quote)Object.entries(r.quote).forEach(([k,v])=>pairs.push(['Settlement '+k,k==='date'?v:money(v)]));pairs.forEach(([k,v])=>{const p=document.createElement('p'),s=document.createElement('span'),b=document.createElement('strong');s.textContent=k;b.textContent=v;p.append(s,b);$('summary').append(p);});$('warnings').textContent=r.warnings.join(' ');const keys=['date','event','interest','fees','payment','capital_paid','principal','balance'],t=document.createElement('table'),head=document.createElement('thead'),tr=document.createElement('tr');keys.forEach(k=>{const th=document.createElement('th');th.scope='col';th.textContent=k;tr.append(th);});head.append(tr);t.append(head);const body=document.createElement('tbody');r.rows.forEach(row=>{const tr=document.createElement('tr');keys.forEach(k=>{const td=document.createElement('td');td.textContent=typeof row[k]==='number'?money(row[k]):row[k];tr.append(td);});body.append(tr);});t.append(body);$('schedule').replaceChildren(t);$('results').hidden=false;}
+$('loan').addEventListener('input',()=>{reference=crypto.randomUUID();$('results').hidden=true;});$('report').addEventListener('input',()=>{reference=crypto.randomUUID();});
+$('loan').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('results').hidden=true;try{display(await post('/calculate',{loan:loan()}));}catch(x){$('error').textContent=x.message;}};
+$('reset').onclick=()=>{Object.entries(defaults).forEach(([k,v])=>$(k).value=v);$('verified').checked=false;$('original_large').checked=false;$('irregular').value='';$('fees').value='';$('results').hidden=true;reference=crypto.randomUUID();$('error').textContent='';};
+$('csv').onclick=async()=>{try{const r=await fetch('/csv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({loan:loan()})});if(!r.ok)throw Error('Export failed. Recalculate and retry.');const u=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=u;a.download='SPWM-schedule.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(x){$('error').textContent=x.message;}};
+$('report').onsubmit=async e=>{e.preventDefault();const b=$('send');b.disabled=true;$('status').textContent='Preparing your report…';try{const c=loan();display(await post('/calculate',{loan:c}));const token=document.querySelector('[name="cf-turnstile-response"]')?.value||'';const r=await post('/email',{loan:c,request_id:reference,token,person:{name:$('name').value,email:$('email').value,mobile:$('mobile').value,consent:$('consent').checked,followup:$('followup').checked}});$('status').textContent=r.message+' Reference: '+r.reference;}catch(x){$('status').textContent=x.message;}finally{b.disabled=false;if(window.turnstile)turnstile.reset();}};
+new ResizeObserver(()=>{try{const origin=new URL(document.referrer).origin;if(['https://www.spwm.co.za','https://spwm.co.za'].includes(origin))parent.postMessage({type:'spwm-height',height:document.querySelector('main').scrollHeight+44},origin);}catch(e){}}).observe(document.querySelector('main'));
+</script></body></html>'''
+
+
+========================================================================
+FILE: reports.py
+========================================================================
+"""In-memory PDF, Excel and CSV reports. No public PDF-download endpoint."""
+import io, csv, json, zipfile, re
+from pathlib import Path
+from datetime import datetime
+from xml.sax.saxutils import escape
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from openpyxl import Workbook
+
+METRICS=[('Monthly instalment excluding fees','instalment'),('Final payment including residual/balloon','final_payment'),('Total paid','total_paid'),('Total interest','total_interest'),('Fees including insurance','total_fees'),('Insurance already included in fees','total_insurance'),('Interest saved versus no extras','interest_saved')]
+
+def csv_data(r):
+    out=io.StringIO();keys=list(r['rows'][0]) if r['rows'] else ['date'];w=csv.DictWriter(out,keys);w.writeheader()
+    for row in r['rows']:w.writerow({k:round(v,2) if isinstance(v,float) else v for k,v in row.items()})
+    return out.getvalue().encode('utf-8-sig')
+
+def pdf_data(c,r,person,reference):
+    out=io.BytesIO();styles=getSampleStyleSheet();story=[]
+    def p(text):return Paragraph(escape(str(text)),styles['Normal'])
+    logo=Path(__file__).with_name('logo.jpg')
+    if logo.is_file():
+        image=Image(str(logo));image.drawHeight=image.imageHeight*160/image.imageWidth;image.drawWidth=160;image.hAlign='LEFT';story.extend([image,Spacer(1,12)])
+    story += [Paragraph('SPWM Loan Payoff Summary',styles['Title']),p('Reference: '+reference),p('Prepared for: '+person['name']),p('Email: '+person['email']),p('Mobile: '+person.get('mobile','')),Spacer(1,12)]
+    pairs=[('Loan type',c['kind']),('Principal at balance date',f"R{float(c['principal']):,.2f}"),('Balance date',c['start']),('First payment',c['first']),('Annual rate',str(c['rate'])+'%'),('Remaining months',str(c['months']))]
+    pairs += [(label,f'R{r[key]:,.2f}') for label,key in METRICS];pairs.append(('Payoff',r['payoff'] or 'Not cleared'))
+    if r['quote']:
+        for key,v in r['quote'].items():pairs.append(('Settlement '+key,'Lender-confirmed charge required' if v is None else f'R{v:,.2f}' if isinstance(v,(float,int)) else v))
+    table=Table([[p(a),p(b)] for a,b in pairs],colWidths=[245,265]);table.setStyle(TableStyle([('LINEABOVE',(0,0),(-1,0),2,colors.HexColor('#ce2029')),('BACKGROUND',(0,0),(0,-1),colors.whitesmoke),('VALIGN',(0,0),(-1,-1),'TOP'),('BOTTOMPADDING',(0,0),(-1,-1),6)]));story.extend([table,Spacer(1,12)])
+    for w in r['warnings']:story.extend([p(w),Spacer(1,5)])
+    story.extend([p('Actual/365 simple daily interest; entered rate held constant. Extras settle interest, fees, principal in that order. Final payment clears residual and balloon. Monthly costs billed on scheduled dates; no first-period proration. Settlement is after same-day payments.'),Spacer(1,8),p('Estimate only: not financial advice, credit approval, legal certification or a lender settlement quotation. Reference rules need current review. No section 103(5) default reconstruction, court/collection tariffs, debt review, conveyancing or bond-cancellation attorney fees.'),Spacer(1,12),Paragraph('Full amortisation schedule',styles['Heading2'])])
+    data=[['Date','Event','Interest','Fees','Paid','Principal','Total owed']]
+    for x in r['rows']:data.append([x['date'],p(x['event'])]+[f'{x[k]:,.2f}' for k in ('interest','fees','payment','principal','balance')])
+    table=Table(data,colWidths=[55,110,60,50,70,80,80],repeatRows=1);table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.black),('TEXTCOLOR',(0,0),(-1,0),colors.white),('LINEBELOW',(0,0),(-1,0),2,colors.HexColor('#ce2029')),('FONTSIZE',(0,0),(-1,-1),7),('VALIGN',(0,0),(-1,-1),'TOP'),('ALIGN',(2,1),(-1,-1),'RIGHT')]));story.extend([table,Spacer(1,12),Paragraph('Calculation inputs and dated payments / fees',styles['Heading2'])])
+    for key,value in sorted(c.items()):story.append(p(key+': '+json.dumps(value,ensure_ascii=True)))
+    story.extend([Spacer(1,10),p('Specific follow-up requested: '+str(person.get('followup') is True)),p('Requested PDF sent to client and SPWM. Excel version sent only to webmaster@spwm.co.za.'),p('SPWM 3.0.0 | webmaster@spwm.co.za')])
+    SimpleDocTemplate(out,pagesize=A4,leftMargin=25,rightMargin=25,topMargin=28,bottomMargin=28,invariant=1).build(story)
+    return out.getvalue()
+
+def xlsx_data(c,r,person,reference):
+    wb=Workbook();ws=wb.active;ws.title='Summary';ws.append(['SPWM calculation',reference]);ws.append(['Name',person['name']]);ws.append(['Email',person['email']]);ws.append(['Payoff',r['payoff']])
+    for label,key in METRICS:ws.append([label,r[key]])
+    if r['quote']:
+        for k,v in r['quote'].items():ws.append(['Settlement '+k,v])
+    schedule=wb.create_sheet('Amortisation');keys=list(r['rows'][0]) if r['rows'] else ['date'];schedule.append(keys)
+    for row in r['rows']:schedule.append([round(row[k],2) if isinstance(row[k],float) else row[k] for k in keys])
+    inputs=wb.create_sheet('Inputs');inputs.append(['Field','Value'])
+    for k,v in sorted(c.items()):inputs.append([k,json.dumps(v,ensure_ascii=True)])
+    notes=wb.create_sheet('Assumptions');notes.append(['Estimate only; not lender quote. Internal SPWM copy only.'])
+    for w in r['warnings']:notes.append([w])
+    for sheet in wb:
+        sheet.freeze_panes='A2';sheet.column_dimensions['A'].width=45;sheet.column_dimensions['B'].width=45
+        for row in sheet:
+            for cell in row:
+                if isinstance(cell.value,str):cell.data_type='s'
+    wb.properties.created=wb.properties.modified=datetime(2000,1,1)
+    raw=io.BytesIO();wb.save(raw)
+    # Canonical ZIP metadata makes unchanged retry attachments deterministic.
+    out=io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(raw.getvalue())) as src,zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as dst:
+        for name in sorted(src.namelist()):
+            data=src.read(name)
+            if name=='docProps/core.xml':data=re.sub(rb'(<dcterms:modified[^>]*>).*?(</dcterms:modified>)',rb'\g<1>2000-01-01T00:00:00Z\g<2>',data)
+            info=zipfile.ZipInfo(name,(2000,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;dst.writestr(info,data)
+    return out.getvalue()
+
+
+========================================================================
+FILE: mailer.py
+========================================================================
+"""Transactional delivery through HTTPS. Two separate, idempotent sends."""
+import os, re, json, uuid, hashlib, base64, time, threading
+from collections import defaultdict, deque
+from urllib.parse import urlparse
+import requests
+from engine import ValidationError, calculate
+from reports import pdf_data, xlsx_data
+SPWM='webmaster@spwm.co.za'
+LOCK=threading.Lock();COUNTS=defaultdict(deque)
+
+class DeliveryError(Exception):
+    def __init__(self,message,client_accepted=False):super().__init__(message);self.client_accepted=client_accepted
+
+def public_url():return (os.getenv('PUBLIC_URL') or os.getenv('RENDER_EXTERNAL_URL') or '').rstrip('/')
+
+def configured():return os.getenv('ENABLE_EMAIL','false').lower()=='true' and all(os.getenv(k) for k in ('FROM_EMAIL','RESEND_API_KEY','TURNSTILE_SITE_KEY','TURNSTILE_SECRET_KEY','PRIVACY_URL')) and bool(public_url())
+
+def validate_person(p):
+    if not isinstance(p,dict) or p.get('consent') is not True:raise ValidationError('Report consent and contact details are required.')
+    out={k:str(p.get(k,'')).strip() for k in ('name','email','mobile')}
+    if not 1<=len(out['name'])<=120 or len(out['mobile'])>30 or any(ord(x)<32 for x in ''.join(out.values())):raise ValidationError('Invalid contact details.')
+    if len(out['email'])>254 or not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+',out['email']):raise ValidationError('Enter a valid email.')
+    out['followup']=p.get('followup') is True;return out
+
+def verify_bot(token):
+    if not isinstance(token,str) or not 1<=len(token)<=2048:return False
+    r=requests.post('https://challenges.cloudflare.com/turnstile/v0/siteverify',data={'secret':os.environ['TURNSTILE_SECRET_KEY'],'response':token},timeout=15);r.raise_for_status();d=r.json()
+    return d.get('success') is True and d.get('hostname')==urlparse(public_url()).hostname and d.get('action')=='report'
+
+def allowed(email):
+    now=time.time();key=hashlib.sha256(email.lower().encode()).hexdigest()
+    with LOCK:
+        for k in list(COUNTS):
+            while COUNTS[k] and COUNTS[k][0]<now-86400:COUNTS[k].popleft()
+            if not COUNTS[k]:del COUNTS[k]
+        if len(COUNTS)>5000:return False
+        if sum(x>now-3600 for x in COUNTS[key])>=3 or len(COUNTS['global'])>=40:return False
+        COUNTS[key].append(now);COUNTS['global'].append(now);return True
+
+def send_reports(loan,person,request_id):
+    reference=str(uuid.UUID(request_id));r=calculate(loan);person=validate_person(person)
+    pdf=pdf_data(loan,r,person,reference);xlsx=xlsx_data(loan,r,person,reference)
+    fingerprint=hashlib.sha256(json.dumps({'loan':loan,'person':person,'reference':reference},sort_keys=True).encode()).hexdigest()
+    def attachment(name,data):return {'filename':name,'content':base64.b64encode(data).decode()}
+    def send(role,to,files,body):
+        payload={'from':os.environ['FROM_EMAIL'],'to':[to],'reply_to':SPWM,'subject':('Your SPWM Loan Payoff Summary' if role=='client' else 'SPWM report copy and Excel version')+' — '+reference,'text':body,'attachments':files}
+        response=requests.post('https://api.resend.com/emails',headers={'Authorization':'Bearer '+os.environ['RESEND_API_KEY'],'Idempotency-Key':fingerprint+'-'+role},json=payload,timeout=25);response.raise_for_status();return response.json().get('id')
+    text=f"Dear {person['name']},\n\nYour requested estimate is attached. A PDF copy is also sent to SPWM. This is not a lender settlement quotation.\nReference: {reference}\n\nSP Wealth Management\n{SPWM}"
+    client_accepted=False
+    try:
+        client_id=send('client',person['email'],[attachment('SPWM-summary.pdf',pdf)],text);client_accepted=True
+        spwm_id=send('spwm',SPWM,[attachment('SPWM-summary.pdf',pdf),attachment('SPWM-calculation.xlsx',xlsx)],f"Requested report copy.\nClient: {person['name']}\nEmail: {person['email']}\nMobile: {person['mobile']}\nSpecific follow-up requested: {person['followup']}\nReference: {reference}\nInternal Excel version must not be forwarded automatically to the client.")
+    except requests.RequestException as e:raise DeliveryError('Client accepted; SPWM copy not confirmed. Retry unchanged with a fresh security check.' if client_accepted else 'Sending not confirmed. Retry unchanged with a fresh security check, or contact SPWM.',client_accepted) from e
+    return dict(reference=reference,client_id=client_id,spwm_id=spwm_id)
+
+
+========================================================================
+FILE: test_app.py
+========================================================================
+import unittest, os, io, uuid, base64, importlib.util, time
+from unittest.mock import Mock, patch
+from datetime import date
+from openpyxl import load_workbook
+from engine import calculate, ValidationError, day, add_month
+from reports import pdf_data, xlsx_data, csv_data
+import mailer
+
+def sample(**kw):
+    c=dict(kind='personal',principal=100000,rate=12,months=60,start='2026-10-27',first='2026-11-27',extra=0,service=69,initiation=0,vat=.15,balloon=0,insurance='none',insurance_rate=0,premium=0,rate_type='variable',irregular=[],fees=[])
+    return {**c,**kw}
+
+def contact(**kw):return {**dict(name='Test Client',email='client@example.com',mobile='',followup=False,consent=True),**kw}
+
+class EngineTests(unittest.TestCase):
+    def test_zero_interest(self):self.assertAlmostEqual(calculate(sample(rate=0,principal=12000,months=12,service=0))['total_paid'],12000)
+    def test_pmt(self):self.assertAlmostEqual(calculate(sample())['instalment'],2224.44476849,5)
+    def test_month_end(self):self.assertEqual(add_month(day('2028-01-31'),1),date(2028,2,29));self.assertEqual(add_month(day('2028-01-31'),2),date(2028,3,31))
+    def test_bad_date(self):
+        with self.assertRaises(ValidationError):calculate(sample(first='2026-02-30'))
+    def test_whole_term(self):
+        with self.assertRaises(ValidationError):calculate(sample(months=6.5))
+    def test_negative_nan(self):
+        for kw in ({'extra':-1},{'rate':float('nan')},{'principal':0}):
+            with self.assertRaises(ValidationError):calculate(sample(**kw))
+    def test_midmonth_payment(self):
+        x=next(x for x in calculate(sample(irregular=[dict(date='2027-01-15',amount=10000)]))['rows'] if x['date']=='2027-01-15');self.assertAlmostEqual(x['payment'],10000);self.assertGreater(x['capital_paid'],0)
+    def test_same_day_interest_once(self):
+        x=calculate(sample(irregular=[dict(date='2026-11-27',amount=1000)]))['rows'][0];self.assertAlmostEqual(x['interest'],100000*.12*31/365);self.assertAlmostEqual(x['payment'],calculate(sample())['instalment']+69+1000)
+    def test_extra_saves(self):self.assertGreater(calculate(sample(extra=500))['interest_saved'],0)
+    def test_initiation_upfront(self):
+        r=calculate(sample(initiation=1207.5));self.assertAlmostEqual(r['total_paid'],100000+r['total_interest']+r['total_fees'])
+    def test_initiation_financed(self):
+        r=calculate(sample(initiation=1207.5,finance=True));self.assertAlmostEqual(r['total_paid'],100000+r['total_interest']+r['total_fees'])
+    def test_service_cap(self):
+        calculate(sample(service=69))
+        with self.assertRaises(ValidationError):calculate(sample(service=69.01))
+    def test_initiation_cap(self):
+        with self.assertRaises(ValidationError):calculate(sample(initiation=1208))
+    def test_insurance(self):
+        self.assertGreater(calculate(sample(insurance='reducing',insurance_rate=4.5))['total_insurance'],0)
+        with self.assertRaises(ValidationError):calculate(sample(insurance='reducing',insurance_rate=4.51))
+    def test_home_insurance(self):
+        with self.assertRaises(ValidationError):calculate(sample(kind='home',insurance='reducing',insurance_rate=2.01))
+    def test_repo(self):
+        with self.assertRaises(ValidationError):calculate(sample(repo=7,rate=29))
+    def test_before_first_quote(self):self.assertAlmostEqual(calculate(sample(quote='2026-11-01'))['quote']['interest'],100000*.12*5/365)
+    def test_before_start_quote(self):
+        with self.assertRaises(ValidationError):calculate(sample(quote='2026-10-26'))
+    def test_variable_large_charge(self):self.assertGreater(calculate(sample(kind='home',quote='2027-01-15'))['quote']['termination'],0)
+    def test_notice(self):self.assertEqual(calculate(sample(kind='home',quote='2027-02-01',notice='2026-11-01'))['quote']['termination'],0)
+    def test_fixed_unknown(self):self.assertIsNone(calculate(sample(kind='home',rate_type='fixed',quote='2027-01-15'))['quote']['total'])
+    def test_fixed_known(self):
+        q=calculate(sample(kind='home',rate_type='fixed',quote='2027-01-15',fixed_charge=500))['quote'];self.assertAlmostEqual(q['total']-q['subtotal'],500)
+    def test_original_large(self):self.assertGreater(calculate(sample(original_large=True,quote='2027-01-15'))['quote']['termination'],0)
+    def test_quote_paid_off(self):self.assertEqual(calculate(sample(rate=0,months=1,quote='2027-02-01'))['quote']['total'],0)
+    def test_balloon(self):self.assertGreater(calculate(sample(kind='vehicle',balloon=30000))['final_payment'],30000)
+    def test_fee_review(self):
+        with self.assertRaises(ValidationError):calculate(sample(fees=[dict(date='2027-01-15',kind='collection',amount=100)]))
+    def test_fee_accounting(self):
+        r=calculate(sample(fees=[dict(date='2027-01-15',kind='collection',amount=100,verified=True)]));self.assertAlmostEqual(r['total_paid'],100000+r['total_interest']+r['total_fees'])
+    def test_150_generated_cashflows(self):
+        for i in range(1,151):
+            c=sample(principal=1000+i*1000,rate=i%30,months=6+i%120,extra=i*3,service=0);r=calculate(c);self.assertAlmostEqual(r['total_paid'],c['principal']+r['total_interest']+r['total_fees'],4)
+
+class ReportTests(unittest.TestCase):
+    def setUp(self):self.c=sample();self.r=calculate(self.c);self.p=contact()
+    def test_pdf(self):
+        a=pdf_data(self.c,self.r,self.p,'reference');b=pdf_data(self.c,self.r,self.p,'reference');self.assertTrue(a.startswith(b'%PDF'));self.assertEqual(a,b)
+    def test_xlsx(self):
+        a=xlsx_data(self.c,self.r,self.p,'reference');time.sleep(1.05);b=xlsx_data(self.c,self.r,self.p,'reference');self.assertEqual(a,b);w=load_workbook(io.BytesIO(a));self.assertIn('Amortisation',w.sheetnames);self.assertGreater(w['Amortisation'].max_row,1)
+    def test_no_formula_injection(self):
+        p=contact(name='=1+1');w=load_workbook(io.BytesIO(xlsx_data(self.c,self.r,p,'r')));self.assertEqual(w['Summary']['B2'].data_type,'s')
+    def test_csv(self):self.assertIn(b'capital_paid',csv_data(self.r))
+
+class MailTests(unittest.TestCase):
+    def setUp(self):
+        self.env=patch.dict(os.environ,{'FROM_EMAIL':'SPWM <reports@example.com>','RESEND_API_KEY':'test-key','PUBLIC_URL':'https://calc.example.com','TURNSTILE_SECRET_KEY':'test-secret'});self.env.start();mailer.COUNTS.clear()
+    def tearDown(self):self.env.stop()
+    def test_consent(self):
+        with self.assertRaises(ValidationError):mailer.validate_person(contact(consent=False))
+    def test_email_validation(self):
+        with self.assertRaises(ValidationError):mailer.validate_person(contact(email='bad\n@example.com'))
+    @patch.object(mailer.requests,'post')
+    def test_pdf_to_client_excel_only_to_spwm(self,post):
+        post.return_value=Mock();post.return_value.json.return_value={'id':'test'};mailer.send_reports(sample(),contact(),str(uuid.uuid4()));a,b=[x.kwargs['json'] for x in post.call_args_list];self.assertEqual(a['to'],['client@example.com']);self.assertEqual(len(a['attachments']),1);self.assertEqual(a['attachments'][0]['filename'],'SPWM-summary.pdf');self.assertEqual(b['to'],['webmaster@spwm.co.za']);self.assertEqual(len(b['attachments']),2);self.assertTrue(base64.b64decode(a['attachments'][0]['content']).startswith(b'%PDF'))
+    @patch.object(mailer.requests,'post')
+    def test_stable_retry_keys(self,post):
+        post.return_value=Mock();post.return_value.json.return_value={'id':'x'};ref=str(uuid.uuid4());mailer.send_reports(sample(),contact(),ref);first=post.call_args_list[:];mailer.send_reports(sample(),contact(),ref)
+        for a,b in zip(first,post.call_args_list[2:]):self.assertEqual(a.kwargs,b.kwargs)
+    @patch.object(mailer.requests,'post')
+    def test_partial_failure(self,post):
+        ok=Mock();ok.json.return_value={'id':'x'};post.side_effect=[ok,mailer.requests.Timeout()]
+        with self.assertRaises(mailer.DeliveryError) as ctx:mailer.send_reports(sample(),contact(),str(uuid.uuid4()))
+        self.assertTrue(ctx.exception.client_accepted)
+    def test_throttle(self):
+        self.assertTrue(mailer.allowed('a@example.com'));self.assertTrue(mailer.allowed('a@example.com'));self.assertTrue(mailer.allowed('a@example.com'));self.assertFalse(mailer.allowed('a@example.com'))
+    @patch.object(mailer.requests,'post')
+    def test_bot_hostname_action(self,post):
+        post.return_value.json.return_value={'success':True,'hostname':'calc.example.com','action':'report'};self.assertTrue(mailer.verify_bot('test'));post.return_value.json.return_value={'success':True,'hostname':'evil.example.com','action':'report'};self.assertFalse(mailer.verify_bot('test'))
+
+HAS_FLASK=importlib.util.find_spec('flask') is not None
+@unittest.skipUnless(HAS_FLASK,'Flask is not installed in this test environment.')
+class WebTests(unittest.TestCase):
+    def setUp(self):
+        import app
+        self.web=app;self.env=patch.dict(os.environ,{'PUBLIC_URL':'https://calc.example.com','ENABLE_EMAIL':'false'});self.env.start();self.client=app.app.test_client();self.origin={'Origin':'https://calc.example.com'}
+    def tearDown(self):self.env.stop()
+    def test_home(self):self.assertEqual(self.client.get('/').status_code,200)
+    def test_health(self):self.assertEqual(self.client.get('/health').json['version'],'3.0.0')
+    def test_calculate(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()},headers=self.origin).status_code,200)
+    def test_reject_origin(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()}).status_code,403)
+    def test_csv(self):self.assertIn(b'capital_paid',self.client.post('/csv',json={'loan':sample()},headers=self.origin).data)
+    def test_email_disabled(self):self.assertEqual(self.client.post('/email',json={},headers=self.origin).status_code,503)
+    def test_no_pdf_download(self):self.assertEqual(self.client.get('/pdf').status_code,404)
+    def test_email_route(self):
+        with patch.object(mailer,'configured',return_value=True),patch.object(mailer,'verify_bot',return_value=True),patch.object(mailer,'allowed',return_value=True),patch.object(mailer,'send_reports',return_value={'reference':'test'}):
+            r=self.client.post('/email',json={'loan':sample(),'person':contact(),'token':'t','request_id':str(uuid.uuid4())},headers=self.origin);self.assertEqual(r.status_code,200)
+
+if __name__=='__main__':unittest.main(verbosity=2)
+
+
+========================================================================
+FILE: requirements.txt
+========================================================================
+Flask>=3.1,<4
+requests>=2.32,<3
+reportlab>=4.4,<5
+openpyxl>=3.1,<4
+gunicorn>=23,<24
+
+
+========================================================================
+FILE: .python-version
+========================================================================
+3.13
+
+
+========================================================================
+FILE: YOLA-PASTE-THIS.html
+========================================================================
+<!-- Replace REPLACE_WITH_RENDER_URL with your actual HTTPS service origin. -->
+<div style="max-width:1200px;margin:0 auto;">
+<iframe id="spwm-calculator" src="REPLACE_WITH_RENDER_URL" title="SP Wealth Management Loan Calculator" width="100%" height="1600" style="display:block;border:0;background:white;"></iframe>
+</div>
+<script>
+(function(){
+ const frame=document.getElementById('spwm-calculator');
+ const origin=new URL(frame.src).origin;
+ window.addEventListener('message',function(event){
+  if(event.source!==frame.contentWindow||event.origin!==origin||event.data?.type!=='spwm-height')return;
+  const h=Number(event.data.height);
+  if(Number.isFinite(h)&&h>300&&h<100000)frame.style.height=Math.ceil(h)+'px';
+ });
+})();
+</script>
+

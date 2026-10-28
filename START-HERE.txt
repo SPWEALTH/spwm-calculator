@@ -1,0 +1,144 @@
+SPWM — START AGAIN HERE
+Complete source package 3.0.0 | 27 October 2026
+
+THIS PACKAGE IS SELF-CONTAINED
+Do not search previous messages for application code. Use only this package.
+All deployable files are at the TOP LEVEL of the ZIP. There is NO application/ folder and NO templates/ or static/ folder to configure.
+You do not need to install Python, Git, a command-line tool, Poetry or Flask on your computer.
+You need a browser, GitHub, Render, Resend and Cloudflare Turnstile accounts, and access to SPWM DNS through its administrator.
+
+YOUR GOAL
+Visitors calculate personal, vehicle or ordinary home loans on spwm.co.za; view the schedule; request a branded PDF emailed to themselves. SPWM receives a separate PDF copy AND the Excel version at webmaster@spwm.co.za. Excel is not emailed to the client. There is no Print/Save PDF button or public PDF-download endpoint. Browser users retain their browser's own print capabilities. Formspree is not used.
+
+1. DOWNLOAD AND EXTRACT — DO THIS FIRST
+Download SPWM-COMPLETE-RESTART.zip from the assistant response.
+Windows: right-click ZIP > Extract All > Extract. Mac: double-click ZIP.
+Open the extracted folder. You must see app.py, engine.py, interface.py, reports.py, mailer.py, requirements.txt, test_app.py and logo.jpg directly. A hidden .python-version file is also included.
+Do NOT upload only the ZIP. A file called Finance calculations is not the application.
+
+2. UPLOAD THE FILES TO GITHUB
+In your browser open github.com, sign in, open SPWEALTH/spwm-calculator.
+Click Code. Select main in the branch selector above the file list.
+Click Add file > Upload files.
+From the extracted folder, drag the files themselves into GitHub. Do not drag an enclosing folder or the ZIP. Upload all extracted files; the guide/settings/Yola files can remain in the repository and do not affect running the app.
+Enter commit message: Install complete SPWM calculator version 3.
+Commit directly to main if permitted. If you must create a branch, merge its pull request into main before proceeding.
+Return to Code. STOP AND CHECK: app.py and requirements.txt MUST be visible immediately without opening a folder.
+The old Finance calculations file can stay; it does not run anything. You do not need to delete your repository or create another Render service.
+
+3. VERIFY THE PYTHON VERSION FILE
+The package includes .python-version containing 3.13.
+If you do not see it in GitHub: Add file > Create new file > name it .python-version > content 3.13 > Commit changes to main.
+The leading dot is part of the filename. This is separate from requirements.txt.
+If Render Environment already has PYTHON_VERSION, remove the conflicting override if you want this file to select Python.
+
+4. FIX RENDER — ONE SERVICE
+Open dashboard.render.com > your existing SPWM service > Settings.
+Service type must be Web Service, runtime Python (not Static Site).
+Repository SPWEALTH/spwm-calculator; branch main.
+Root Directory: completely BLANK. The new package has no application folder.
+Build Command (one line):
+python -m pip install -r requirements.txt && python -c "import flask" && python -m unittest -v test_app
+Start Command (one line):
+gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+Health Check Path: /health
+Pre-Deploy Command: blank
+Save changes. Keep exactly one worker for this release's in-memory rate limits.
+Open Environment: set ENABLE_EMAIL=false. Email is deliberately disabled while getting the calculator online.
+Do not put passwords in GitHub. Do not use the old diagnostic pwd/ls command as the Build Command.
+
+5. DEPLOY THE CALCULATOR
+Manual Deploy > Deploy latest commit.
+The log must install dependencies, run tests and start Gunicorn. On Render with Flask installed, the supplied suite should run 47 tests with no Flask-related skips. If tests fail, do not bypass them; keep the error text.
+Open the HTTPS address Render provides. You should see the logo, three loan options and calculator. Email button will be disabled at this stage; that is intentional.
+Open the same address with /health appended. Expect status ok, version 3.0.0, email_configured false.
+Record your exact app address; do not guess it from the service name.
+STOP HERE if the calculator does not load. Email/DNS/Yola configuration cannot repair missing code.
+
+6. PREPARE RESEND — THE EMAIL SERVICE
+Create/sign in at resend.com. Open Domains > add a sending domain you control.
+Suggested isolated subdomain: reports.spwm.co.za. This is a proposal, not a domain already created or approved.
+Resend displays DNS records. Ask whoever controls spwm.co.za DNS to add the EXACT provided records. Do not overwrite your existing website/mailbox MX or SPF configuration. Adding records must be done by someone authorised to manage DNS.
+Wait for Verified status. Choose a permitted sender, e.g. SP Wealth Management <calculator@reports.spwm.co.za> after verification.
+Create a sending API key. Store it only in Render Environment. Do not send it to the assistant.
+A trial/test sending domain is not sufficient to send to arbitrary client addresses. Resend must verify your own sender domain.
+Each successful client report normally sends two recipient emails (client + SPWM). Check current quotas and dashboard usage. The app also limits attempts locally.
+This uses HTTPS API email, not SMTP; it avoids Render Free's blocked SMTP ports.
+
+7. PREPARE TURNSTILE — BOT PROTECTION
+Create/sign in at Cloudflare. Open Turnstile > Add widget > Managed.
+Authorised hostname: the actual Render app hostname (no https:// or slash), e.g. your-real-name.onrender.com. The iframe runs on that hostname, so authorising only www.spwm.co.za is not enough.
+Copy the public Site Key and private Secret Key. No need to move all DNS to Cloudflare merely to use Turnstile.
+The application requires server-verified success, matching hostname and action report. Never disable this protection on a public email form.
+
+8. PRIVACY AND EMAIL ENVIRONMENT SETTINGS
+Publish/review the actual SPWM privacy notice. Do not use a guessed or nonexistent page address. It must explain personal/calculation information, report purpose, SPWM copy, vendors/overseas processing where applicable, retention, rights and contacts. Report consent is not marketing consent.
+Render service > Environment > add/edit:
+PUBLIC_URL = the EXACT deployed HTTPS origin, no trailing slash
+FROM_EMAIL = your VERIFIED sender display name/address
+RESEND_API_KEY = the private Resend sending key
+TURNSTILE_SITE_KEY = the widget public Site Key
+TURNSTILE_SECRET_KEY = the private Turnstile Secret Key
+PRIVACY_URL = the actual published HTTPS privacy-notice page
+ENABLE_EMAIL = true
+Example formats only, do NOT paste these invented values:
+PUBLIC_URL https://your-actual-name.onrender.com
+FROM_EMAIL SP Wealth Management <calculator@your-verified-domain>
+The SPWM recipient is fixed as webmaster@spwm.co.za in mailer.py; no invented info@ address remains.
+Save and redeploy if necessary. /health should say email_configured true, but that only checks presence/enabled flags, not real provider validity.
+
+9. SEND A REAL CONTROLLED TEST
+Open the app directly on its Render address. Use your OWN name/email, not an uninvolved person's address. Calculate, read/accept report consent, complete the security check, click Email my PDF.
+Check your own inbox/spam and webmaster@spwm.co.za. The client should get PDF ONLY. SPWM should get PDF AND XLSX in its separate email.
+Compare PDF, Excel, screen and CSV; check schedule dates. Check Resend dashboard for delivery/bounce status.
+The app says accepted for sending, not delivered/read. Provider acceptance is not inbox delivery. No signed webhook tracking or durable queue in this release.
+If client send succeeds and SPWM send fails, the app says so. Retry unchanged with a fresh Turnstile token. The same browser request reference/provider keys avoid duplicate accepted sends within Resend's 24-hour idempotency window. Reload/new inputs/new reference can create a new email. This is not a permanent exactly-once guarantee.
+The Excel attachment is intentionally sent only to webmaster@spwm.co.za, not attached to the client email.
+
+10. PUT IT ON YOLA — LAST, NOT FIRST
+Open YOLA-PASTE-THIS.html from this package in Notepad/plain-text editor.
+Replace REPLACE_WITH_RENDER_URL with your actual deployed HTTPS origin. This is the only URL to edit in the Yola snippet.
+In Yola remove all previous calculator embeds/listeners from the calculator page. Add ONE HTML/custom-code block and paste the entire file.
+Save and test the actual published staging page. The editor preview may use an origin not allowed by the app; direct app testing and actual spwm.co.za staging are the relevant checks.
+The app only permits embedding on https://spwm.co.za and https://www.spwm.co.za and itself. Height messages verify origin/source; client details are not sent in those messages.
+Test mobile, iframe scrolling/height, keyboard and live email from Yola. Then publish publicly only after final approvals below.
+
+FUNCTIONAL SCOPE
+Personal unsecured, vehicle/other credit transaction, ordinary home mortgage; performing natural-person planning accounts only.
+Date-driven actual/365 simple interest at constant nominal annual rate. Dated extras first settle interest, fees, capital. Extras do not replace scheduled instalments. First due date 1–62 days after principal/balance date. Month-end anchoring and leap dates handled.
+Monthly PMT or entered actual instalment. Final payment explicitly clears residual and balloon; may be larger than ordinary instalments. No negative balances; excess offered funds shown as unused, not debited.
+Service/initiation VAT-inclusive inputs, upfront/financed initiation (not double counted), insurance fixed/reducing/none, separate dated documented charges. Monthly service/insurance billed on scheduled dates; no first-period proration or automatic unbilled-settlement proration.
+Settlement AFTER same-day payments. Existing-loan original-large checkbox is important: current balance is not necessarily original principal. Fixed large total withheld without supplied lender charge; variable large termination is a three-calendar-month remaining-notice interest approximation, not an exact statutory/lender quote.
+No universal NCA maximum principal. Software amount/term caps are numerical guardrails.
+
+WHAT IS NOT COVERED / LEGAL REVIEW REQUIRED
+This package is NOT certification of all SA loan contracts or current laws. Reference initiation/service/insurance/repo screens require qualified review of category, contract date, proportional fee limit, applicable VAT, first-period fees and any amendments. Reference amounts were carried forward from earlier research, not freshly certified here.
+Default amounts are manually documented inputs; no collection tariff, section 103(5) cap reconstruction, default history audit, debt review or court costs model. No enhanced/joint-life insurance or affordable-housing compliance assessment, juristic-person NCA applicability, future rate changes, conveyancing or bond cancellation attorney fees.
+Fixed insurance cost screen at initial balance is not certification of continuing cover/cost suitability. Obtain actual policy and lender quote.
+No daily cents rounding or interest-on-interest compounding. Explain differences from bank statements.
+
+TESTS ACTUALLY RUN HERE
+39 tests passed; 8 Flask HTTP tests skipped because Flask is not installed in this execution environment. One test loops through 150 cashflow-conservation cases. PDF and XLSX generation, stable retry bytes/keys, formula safety, CSV, engine boundaries and mocked provider recipient/attachment routing tested.
+All Python sources compiled and browser JavaScript passed Node syntax check. Actual browser/Yola execution not tested here. Provider calls mocked: no live email or Turnstile request was made.
+Render build command installs Flask before tests, so HTTP tests will run there. Keep the resulting Render log as evidence. No account was created, DNS edited or website changed here.
+
+FREE VERSUS PRODUCTION
+Render Free sleeps after 15 idle minutes, may take about a minute to wake, can restart, has quotas and ephemeral local storage; Render explicitly says not to use Free instances for production. Use Free to test, then choose an appropriate always-on paid compute instance for a client-facing public service. Upgrading a workspace plan alone does not change the service compute tier.
+This app has no database or background worker. Reports are produced in memory and sent synchronously using HTTPS. In-memory rate limits reset on restart; one worker only. Built-in attempt caps: 3/recipient/hour and 40/process-day. Provider quotas still apply. There is no durable auto-retry queue, delivery webhook or guaranteed availability. For service commitments/volume, add shared throttling, durable jobs/status/retries, authenticated delivery webhooks and operational monitoring.
+Do not use a free expiring database for durable client records. No database is required by this package.
+Application does not persist personal data/PDFs in files; providers may retain messages/logs. Manage retention and security settings with vendors.
+
+PUBLIC LAUNCH CHECKLIST
+[ ] App files present at GitHub root, build/tests pass on Render.
+[ ] Direct calculator and mobile/keyboard tested.
+[ ] Current SA compliance review and examples reconciled to actual lenders for all three products.
+[ ] Privacy/vendor review, retention, FSP/company footer details approved as applicable.
+[ ] Sender verified; client PDF and SPWM PDF+XLSX actually received and checked.
+[ ] Failed-send, invalid bot token, duplicate request and long schedule cases tested.
+[ ] Yola staging embed and actual published hostname tested.
+[ ] Always-on hosting/monitoring chosen before availability promises.
+[ ] Owner sign-off, backup and periodic rule/dependency review scheduled.
+
+YOU SHOULD NOT NEED TO EDIT THE PYTHON TO GET STARTED
+Upload files. Apply Render settings. Configure external services and environment values. Replace only the one Yola URL. Future code updates go through GitHub; Yola stays unchanged unless app URL changes.
+No claim of perfection is made. This is complete source plus a deployment runbook, subject to actual live setup and acceptance testing.

@@ -1,0 +1,56 @@
+/usr/local/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.0) or chardet (7.5.1)/charset_normalizer (3.4.2) doesn't match a supported version!
+  warnings.warn(
+test_150_generated_cashflows (test_app.EngineTests.test_150_generated_cashflows) ... ok
+test_bad_date (test_app.EngineTests.test_bad_date) ... ok
+test_balloon (test_app.EngineTests.test_balloon) ... ok
+test_before_first_quote (test_app.EngineTests.test_before_first_quote) ... ok
+test_before_start_quote (test_app.EngineTests.test_before_start_quote) ... ok
+test_extra_saves (test_app.EngineTests.test_extra_saves) ... ok
+test_fee_accounting (test_app.EngineTests.test_fee_accounting) ... ok
+test_fee_review (test_app.EngineTests.test_fee_review) ... ok
+test_fixed_known (test_app.EngineTests.test_fixed_known) ... ok
+test_fixed_unknown (test_app.EngineTests.test_fixed_unknown) ... ok
+test_home_insurance (test_app.EngineTests.test_home_insurance) ... ok
+test_initiation_cap (test_app.EngineTests.test_initiation_cap) ... ok
+test_initiation_financed (test_app.EngineTests.test_initiation_financed) ... ok
+test_initiation_upfront (test_app.EngineTests.test_initiation_upfront) ... ok
+test_insurance (test_app.EngineTests.test_insurance) ... ok
+test_midmonth_payment (test_app.EngineTests.test_midmonth_payment) ... ok
+test_month_end (test_app.EngineTests.test_month_end) ... ok
+test_negative_nan (test_app.EngineTests.test_negative_nan) ... ok
+test_notice (test_app.EngineTests.test_notice) ... ok
+test_original_large (test_app.EngineTests.test_original_large) ... ok
+test_pmt (test_app.EngineTests.test_pmt) ... ok
+test_quote_paid_off (test_app.EngineTests.test_quote_paid_off) ... ok
+test_repo (test_app.EngineTests.test_repo) ... ok
+test_same_day_interest_once (test_app.EngineTests.test_same_day_interest_once) ... ok
+test_service_cap (test_app.EngineTests.test_service_cap) ... ok
+test_variable_large_charge (test_app.EngineTests.test_variable_large_charge) ... ok
+test_whole_term (test_app.EngineTests.test_whole_term) ... ok
+test_zero_interest (test_app.EngineTests.test_zero_interest) ... ok
+test_bot_hostname_action (test_app.MailTests.test_bot_hostname_action) ... ok
+test_consent (test_app.MailTests.test_consent) ... ok
+test_email_validation (test_app.MailTests.test_email_validation) ... ok
+test_partial_failure (test_app.MailTests.test_partial_failure) ... ok
+test_pdf_to_client_excel_only_to_spwm (test_app.MailTests.test_pdf_to_client_excel_only_to_spwm) ... ok
+test_stable_retry_keys (test_app.MailTests.test_stable_retry_keys) ... ok
+test_throttle (test_app.MailTests.test_throttle) ... ok
+test_csv (test_app.ReportTests.test_csv) ... ok
+test_no_formula_injection (test_app.ReportTests.test_no_formula_injection) ... ok
+test_pdf (test_app.ReportTests.test_pdf) ... ok
+test_xlsx (test_app.ReportTests.test_xlsx) ... ok
+test_calculate (test_app.WebTests.test_calculate) ... skipped 'Flask is not installed in this test environment.'
+test_csv (test_app.WebTests.test_csv) ... skipped 'Flask is not installed in this test environment.'
+test_email_disabled (test_app.WebTests.test_email_disabled) ... skipped 'Flask is not installed in this test environment.'
+test_email_route (test_app.WebTests.test_email_route) ... skipped 'Flask is not installed in this test environment.'
+test_health (test_app.WebTests.test_health) ... skipped 'Flask is not installed in this test environment.'
+test_home (test_app.WebTests.test_home) ... skipped 'Flask is not installed in this test environment.'
+test_no_pdf_download (test_app.WebTests.test_no_pdf_download) ... skipped 'Flask is not installed in this test environment.'
+test_reject_origin (test_app.WebTests.test_reject_origin) ... skipped 'Flask is not installed in this test environment.'
+
+----------------------------------------------------------------------
+Ran 47 tests in 1.421s
+
+OK (skipped=8)
+
+Provider calls were mocked: no live emails or bot checks were made. Flask HTTP tests skipped locally, because Flask is absent; they will run after pip install on Render.
