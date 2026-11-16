@@ -1,5 +1,4 @@
 RENDER SETTINGS — SPWM COMPLETE RESTART v3.0.1
-
 Service: Web Service (not Static Site)
 Repository: SPWEALTH/spwm-calculator
 Branch: main
@@ -25,9 +24,6 @@ TURNSTILE_SITE_KEY=YOUR_PUBLIC_TURNSTILE_SITE_KEY
 TURNSTILE_SECRET_KEY=YOUR_PRIVATE_TURNSTILE_SECRET
 PRIVACY_URL=YOUR_ACTUAL_PUBLISHED_PRIVACY_NOTICE_HTTPS_URL
 ENABLE_EMAIL=true
-
 DO NOT copy placeholder values literally. No secrets go into GitHub or Yola.
-
 mailer.py sends the client PDF to the client, a PDF/XLSX copy to webmaster@spwm.co.za, and the internal CSV to reports@spwm.co.za.
-
 Formspree is not used. No database, Poetry commands, CLI or terminal on your computer are required.
