@@ -28,7 +28,7 @@ def index():return render_template_string(HTML,enabled=mailer.configured(),sitek
 def logo():return send_file(Path(__file__).with_name('logo.jpg'),mimetype='image/jpeg')
 
 @app.get('/health')
-def health():return jsonify(status='ok',version='3.0.0',email_configured=mailer.configured())
+def health():return jsonify(status='ok',version='3.0.1',email_configured=mailer.configured())
 
 @app.post('/calculate')
 def calc():
