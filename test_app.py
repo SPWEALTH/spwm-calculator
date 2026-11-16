@@ -82,37 +82,36 @@ class MailTests(unittest.TestCase):
     def test_email_validation(self):
         with self.assertRaises(ValidationError):mailer.validate_person(contact(email='bad\n@example.com'))
     @patch.object(mailer.requests,'post')
-    @patch.object(mailer.requests, 'post')
-def test_pdf_to_client_excel_to_spwm_csv_to_reports(self, post):
-    post.return_value = Mock()
-    post.return_value.json.return_value = {'id': 'test'}
+    def test_pdf_to_client_excel_to_spwm_csv_to_reports(self, post):
+        post.return_value = Mock()
+        post.return_value.json.return_value = {'id': 'test'}
 
-    mailer.send_reports(sample(), contact(), str(uuid.uuid4()))
+        mailer.send_reports(sample(), contact(), str(uuid.uuid4()))
 
-    client, spwm, reports = [
-        x.kwargs['json'] for x in post.call_args_list
-    ]
+        client, spwm, reports = [
+            x.kwargs['json'] for x in post.call_args_list
+        ]
 
-    self.assertEqual(client['to'], ['client@example.com'])
-    self.assertEqual(len(client['attachments']), 1)
-    self.assertEqual(client['attachments'][0]['filename'], 'SPWM-summary.pdf')
-    self.assertTrue(
-        base64.b64decode(client['attachments'][0]['content']).startswith(b'%PDF')
-    )
+        self.assertEqual(client['to'], ['client@example.com'])
+        self.assertEqual(len(client['attachments']), 1)
+        self.assertEqual(client['attachments'][0]['filename'], 'SPWM-summary.pdf')
+        self.assertTrue(
+            base64.b64decode(client['attachments'][0]['content']).startswith(b'%PDF')
+        )
 
-    self.assertEqual(spwm['to'], ['webmaster@spwm.co.za'])
-    self.assertEqual(len(spwm['attachments']), 2)
-    self.assertEqual(
-        [x['filename'] for x in spwm['attachments']],
-        ['SPWM-summary.pdf', 'SPWM-calculation.xlsx'],
-    )
+        self.assertEqual(spwm['to'], ['webmaster@spwm.co.za'])
+        self.assertEqual(len(spwm['attachments']), 2)
+        self.assertEqual(
+            [x['filename'] for x in spwm['attachments']],
+            ['SPWM-summary.pdf', 'SPWM-calculation.xlsx'],
+        )
 
-    self.assertEqual(reports['to'], ['reports@spwm.co.za'])
-    self.assertEqual(len(reports['attachments']), 1)
-    self.assertEqual(
-        reports['attachments'][0]['filename'],
-        'SPWM-calculation.csv',
-    )
+        self.assertEqual(reports['to'], ['reports@spwm.co.za'])
+        self.assertEqual(len(reports['attachments']), 1)
+        self.assertEqual(
+            reports['attachments'][0]['filename'],
+            'SPWM-calculation.csv',
+        )
     @patch.object(mailer.requests,'post')
     def test_stable_retry_keys(self,post):
         post.return_value=Mock();post.return_value.json.return_value={'id':'x'};ref=str(uuid.uuid4());mailer.send_reports(sample(),contact(),ref);first=post.call_args_list[:];mailer.send_reports(sample(),contact(),ref)
