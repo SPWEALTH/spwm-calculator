@@ -15,7 +15,7 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
 
 Health Check Path: /health
 Pre-Deploy Command: blank
-First-stage Environment: ENABLE_EMAIL=true
+First-stage Environment: ENABLE_EMAIL=false
 Python version: .python-version in repository root contains 3.13
 Remove conflicting PYTHON_VERSION environment variable if you want the file to control runtime.
 
