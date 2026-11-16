@@ -1,7 +1,7 @@
-RENDER SETTINGS — SPWM COMPLETE RESTART v3.0.0
+RENDER SETTINGS — SPWM COMPLETE RESTART v3.0.1
 
 Service: Web Service (not Static Site)
-Repository: SPWEALTH/spwm-calculator (or your NEW repository if you deliberately create one)
+Repository: SPWEALTH/spwm-calculator
 Branch: main
 Root Directory: LEAVE COMPLETELY BLANK
 Language/Runtime: Python 3
@@ -15,19 +15,10 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
 
 Health Check Path: /health
 Pre-Deploy Command: blank
-First-stage Environment: ENABLE_EMAIL=false
-Python version: .python-version in repository root contains 3.13
-Remove conflicting PYTHON_VERSION environment variable if you want the file to control runtime.
 
-After the first calculator deployment, add Environment settings:
-PUBLIC_URL=YOUR_ACTUAL_RENDER_HTTPS_ORIGIN_WITHOUT_TRAILING_SLASH
-FROM_EMAIL=YOUR_VERIFIED_SENDER_DISPLAY_NAME_AND_ADDRESS
-RESEND_API_KEY=YOUR_PRIVATE_RESEND_SENDING_KEY
-TURNSTILE_SITE_KEY=YOUR_PUBLIC_TURNSTILE_SITE_KEY
-TURNSTILE_SECRET_KEY=YOUR_PRIVATE_TURNSTILE_SECRET
-PRIVACY_URL=YOUR_ACTUAL_PUBLISHED_PRIVACY_NOTICE_HTTPS_URL
-ENABLE_EMAIL=true
+First-stage environment variable:
+ENABLE_EMAIL=false
 
-DO NOT copy placeholder values literally. No secrets go into GitHub or Yola.
-SPWM copy recipient is already webmaster@spwm.co.za in mailer.py.
-Formspree is not used. No database, Poetry commands, CLI or terminal on your computer are required.
+Python version:
+.python-version in the repository root contains 3.13.
+Remove any conflicting PYTHON_VERSION environment variable if you want that file to control the runtime.al on your computer are required.
