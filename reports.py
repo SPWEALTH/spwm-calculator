@@ -20,8 +20,16 @@ def pdf_data(c,r,person,reference):
     out=io.BytesIO();styles=getSampleStyleSheet();story=[]
     def p(text):return Paragraph(escape(str(text)),styles['Normal'])
     logo=Path(__file__).with_name('logo.jpg')
-    if logo.is_file():
-        image=Image(str(logo));image.drawHeight=image.imageHeight*160/image.imageWidth;image.drawWidth=160;image.hAlign='LEFT';story.extend([image,Spacer(1,12)])
+if logo.is_file():
+    try:
+        image=Image(str(logo))
+        if image.imageWidth > 0:
+            image.drawHeight=image.imageHeight*160/image.imageWidth
+            image.drawWidth=160
+            image.hAlign='LEFT'
+            story.extend([image,Spacer(1,12)])
+    except Exception:
+        pass
     story += [Paragraph('SPWM Loan Payoff Summary',styles['Title']),p('Reference: '+reference),p('Prepared for: '+person['name']),p('Email: '+person['email']),p('Mobile: '+person.get('mobile','')),Spacer(1,12)]
     pairs=[('Loan type',c['kind']),('Principal at balance date',f"R{float(c['principal']):,.2f}"),('Balance date',c['start']),('First payment',c['first']),('Annual rate',str(c['rate'])+'%'),('Remaining months',str(c['months']))]
     pairs += [(label,f'R{r[key]:,.2f}') for label,key in METRICS];pairs.append(('Payoff',r['payoff'] or 'Not cleared'))
