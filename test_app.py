@@ -137,16 +137,18 @@ class WebTests(unittest.TestCase):
     def test_home(self):self.assertEqual(self.client.get('/').status_code,200)
     def test_health(self):self.assertEqual(self.client.get('/health').json['version'],'3.0.1')
     def test_calculate(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()},headers=self.origin).status_code,200)
-    def test_reject_origin(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()}).status_code,403)
+        def test_reject_origin(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()}).status_code,403)
+
     def test_csv_disabled(self):
-    self.assertEqual(
-        self.client.post(
-            '/csv',
-            json={'loan': sample()},
-            headers=self.origin,
-        ).status_code,
-        410,
-    )
+        self.assertEqual(
+            self.client.post(
+                '/csv',
+                json={'loan': sample()},
+                headers=self.origin,
+            ).status_code,
+            410,
+        )
+
     def test_email_disabled(self):self.assertEqual(self.client.post('/email',json={},headers=self.origin).status_code,503)
     def test_no_pdf_download(self):self.assertEqual(self.client.get('/pdf').status_code,404)
     def test_email_route(self):
