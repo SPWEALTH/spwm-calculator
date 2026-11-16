@@ -6,23 +6,17 @@ Branch: main
 Root Directory: LEAVE COMPLETELY BLANK
 Language/Runtime: Python 3
 Instance: Free only for evaluation; use always-on paid compute before production availability promises.
-
 Build Command — copy the entire single line:
 python -m pip install -r requirements.txt && python -c "import flask" && python -m unittest -v test_app
-
 Start Command — copy the entire single line:
 gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
-
 Health Check Path: /health
 Pre-Deploy Command: blank
-
 First-stage environment variable:
 ENABLE_EMAIL=false
-
 Python version:
 .python-version in the repository root contains 3.13.
 Remove any conflicting PYTHON_VERSION environment variable if you want that file to control the runtime.
-
 After the first calculator deployment, add Environment settings:
 PUBLIC_URL=YOUR_ACTUAL_RENDER_HTTPS_ORIGIN_WITHOUT_TRAILING_SLASH
 FROM_EMAIL=YOUR_VERIFIED_SENDER_DISPLAY_NAME_AND_ADDRESS
