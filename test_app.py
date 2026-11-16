@@ -137,7 +137,7 @@ class WebTests(unittest.TestCase):
     def test_home(self):self.assertEqual(self.client.get('/').status_code,200)
     def test_health(self):self.assertEqual(self.client.get('/health').json['version'],'3.0.1')
     def test_calculate(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()},headers=self.origin).status_code,200)
-        def test_reject_origin(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()}).status_code,403)
+    def test_reject_origin(self):self.assertEqual(self.client.post('/calculate',json={'loan':sample()}).status_code,403)
 
     def test_csv_disabled(self):
         self.assertEqual(
