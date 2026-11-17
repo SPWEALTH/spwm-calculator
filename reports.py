@@ -42,8 +42,23 @@ if logo.is_file():
     for x in r['rows']:data.append([x['date'],p(x['event'])]+[f'{x[k]:,.2f}' for k in ('interest','fees','payment','principal','balance')])
     table=Table(data,colWidths=[55,110,60,50,70,80,80],repeatRows=1);table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.black),('TEXTCOLOR',(0,0),(-1,0),colors.white),('LINEBELOW',(0,0),(-1,0),2,colors.HexColor('#ce2029')),('FONTSIZE',(0,0),(-1,-1),7),('VALIGN',(0,0),(-1,-1),'TOP'),('ALIGN',(2,1),(-1,-1),'RIGHT')]));story.extend([table,Spacer(1,12),Paragraph('Calculation inputs and dated payments / fees',styles['Heading2'])])
     for key,value in sorted(c.items()):story.append(p(key+': '+json.dumps(value,ensure_ascii=True)))
-    story.extend([Spacer(1,10),p('Specific follow-up requested: '+str(person.get('followup') is True)),p('Requested PDF sent to client and SPWM. Internal Excel version sent to webmaster@spwm.co.za. Internal CSV calculation record sent to reports@spwm.co.za.')])
-    SimpleDocTemplate(out,pagesize=A4,leftMargin=25,rightMargin=25,topMargin=28,bottomMargin=28,invariant=1).build(story)
+        story.extend([
+        Spacer(1, 10),
+        p('Specific follow-up requested: ' + str(person.get('followup') is True)),
+        p('Requested PDF sent to client and SPWM. Internal Excel version sent to webmaster@spwm.co.za. Internal CSV calculation record sent to reports@spwm.co.za.'),
+        p('SPWM 3.0.1 | webmaster@spwm.co.za')
+    ])
+
+    SimpleDocTemplate(
+        out,
+        pagesize=A4,
+        leftMargin=25,
+        rightMargin=25,
+        topMargin=28,
+        bottomMargin=28,
+        invariant=1
+    ).build(story)
+
     return out.getvalue()
 
 def xlsx_data(c,r,person,reference):
