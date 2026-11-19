@@ -37,7 +37,7 @@ def calc():
 
 @app.post('/csv')
 def csv():
-    return jsonify(error='CSV export is no longer available. Request the PDF report by email.'), 4100
+    return jsonify(error='CSV export is no longer available. Request the PDF report by email.'), 410
 
 @app.post('/email')
 def email():
