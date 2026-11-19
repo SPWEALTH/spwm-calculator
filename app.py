@@ -36,9 +36,8 @@ def calc():
     except (ValidationError,ValueError,TypeError,KeyError,AttributeError,OverflowError) as e:return jsonify(error=str(e)),400
 
 @app.post('/csv')
-def export():
-    try:return Response(csv_data(calculate(request.get_json()['loan'])),mimetype='text/csv',headers={'Content-Disposition':'attachment; filename=SPWM-schedule.csv'})
-    except (ValidationError,ValueError,TypeError,KeyError,AttributeError,OverflowError) as e:return jsonify(error=str(e)),400
+def csv():
+    return jsonify(error='CSV export is no longer available. Request the PDF report by email.'), 4100
 
 @app.post('/email')
 def email():
