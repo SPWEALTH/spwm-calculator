@@ -115,7 +115,7 @@ class MailTests(unittest.TestCase):
     @patch.object(mailer.requests,'post')
     def test_stable_retry_keys(self,post):
         post.return_value=Mock();post.return_value.json.return_value={'id':'x'};ref=str(uuid.uuid4());mailer.send_reports(sample(),contact(),ref);first=post.call_args_list[:];mailer.send_reports(sample(),contact(),ref)
-        for a,b in zip(first,post.call_args_list[2:]):self.assertEqual(a.kwargs,b.kwargs)
+        for a,b in zip(first,post.call_args_list[3:]):self.assertEqual(a.kwargs,b.kwargs)
     @patch.object(mailer.requests,'post')
     def test_partial_failure(self,post):
         ok=Mock();ok.json.return_value={'id':'x'};post.side_effect=[ok,mailer.requests.Timeout()]
