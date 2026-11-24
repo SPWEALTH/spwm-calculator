@@ -28,7 +28,30 @@ def index():return render_template_string(HTML,enabled=mailer.configured(),sitek
 def logo():return send_file(Path(__file__).with_name('logo.jpg'),mimetype='image/jpeg')
 
 @app.get('/health')
-def health():return jsonify(status='ok',version='3.0.1',email_configured=mailer.configured())
+def health():
+    required = (
+        'FROM_EMAIL',
+        'RESEND_API_KEY',
+        'TURNSTILE_SITE_KEY',
+        'TURNSTILE_SECRET_KEY',
+        'PRIVACY_URL',
+    )
+
+    return jsonify(
+        status='ok',
+        version='3.0.1',
+        email_configured=mailer.configured(),
+        email_checks={
+            'ENABLE_EMAIL_is_true': (
+                os.getenv('ENABLE_EMAIL', 'false').lower() == 'true'
+            ),
+            'required_values_present': {
+                key: bool(os.getenv(key))
+                for key in required
+            },
+            'public_url_present': bool(mailer.public_url()),
+        },
+    )
 
 @app.post('/calculate')
 def calc():
