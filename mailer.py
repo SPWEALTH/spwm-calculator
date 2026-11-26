@@ -54,7 +54,14 @@ def validate_person(p):
 
 
 def verify_bot(token):
+    log = logging.getLogger('gunicorn.error')
+
     if not isinstance(token, str) or not 1 <= len(token) <= 2048:
+        log.warning(
+            'Turnstile rejected: token missing or invalid length. type=%s length=%s',
+            type(token).__name__,
+            len(token) if isinstance(token, str) else 'n/a',
+        )
         return False
 
     r = requests.post(
@@ -68,11 +75,25 @@ def verify_bot(token):
     r.raise_for_status()
     d = r.json()
 
-    return (
+    expected_hostname = urlparse(public_url()).hostname
+    ok = (
         d.get('success') is True
-        and d.get('hostname') == urlparse(public_url()).hostname
+        and d.get('hostname') == expected_hostname
         and d.get('action') == 'report'
     )
+
+    if not ok:
+        log.warning(
+            'Turnstile rejected: success=%s hostname=%s expected_hostname=%s '
+            'action=%s error_codes=%s',
+            d.get('success'),
+            d.get('hostname'),
+            expected_hostname,
+            d.get('action'),
+            d.get('error-codes'),
+        )
+
+    return ok
 
 
 def allowed(email):
