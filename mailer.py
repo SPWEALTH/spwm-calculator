@@ -3,6 +3,7 @@ import os, re, json, uuid, hashlib, base64, time, threading
 from collections import defaultdict, deque
 from urllib.parse import urlparse
 import requests
+import logging
 from engine import ValidationError, calculate
 from reports import pdf_data, xlsx_data, csv_data
 
